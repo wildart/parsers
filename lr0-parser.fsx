@@ -1,11 +1,10 @@
 namespace CSCI374
 
-// #load "lexer.fsx"
 // #load "grammartools.fsx"
 
 module LR0 =
 
-    open Lexer
+    open ParserTypes
     open GrammarTools
 
     // syntactic analyser
@@ -25,7 +24,7 @@ module LR0 =
                 // get next token
                 match act with
                 // shift and go to a new state
-                | Shift state -> analyse (state::stack) (tokenize input) // advance input
+                | Shift state -> analyse (state::stack) (Lexer.token input) // advance input
                 // reduce by rule: X ::= A1...An
                 | Reduce ruleIdx ->
                     match grammar.[ruleIdx-1] with
@@ -43,6 +42,7 @@ module LR0 =
                 | Accept -> printfn "Accepted!!!"
             else ()
 
-        analyse stack (tokenize input)
+        analyse stack (Lexer.token input)
 
-    let parse grammar action goto input = parser grammar action goto input false
+    let parse grammar action goto input =
+        parser grammar action goto (Seq.toList input) false

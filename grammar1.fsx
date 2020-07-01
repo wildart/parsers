@@ -1,13 +1,10 @@
-#load "lexer.fsx"
 #load "grammartools.fsx"
-
-open CSCI374.Lexer
-open CSCI374.GrammarTools
-
-// Load parsers
 #load "rd1-parser.fsx"
 #load "ll1-parser.fsx"
 #load "lr0-parser.fsx"
+
+open CSCI374.ParserTypes
+open CSCI374.GrammarTools
 
 let grammar = parseGrammarString """
     S → T | ( S + T )
@@ -21,13 +18,16 @@ printGrammar grammar
 let inputString = "((a+a)+a)"
 printfn "Input string: %s\n" inputString;;
 
+inputString |> Seq.toList |> CSCI374.Lexer.tokenize |> printfn "Tokenized input: %A\n"
+
 ///
 /// Top-down parsing: Recursive Descent
 ///
 printfn "RD parser:";;
 CSCI374.RD1.parse grammar inputString;;
-// CSCI374.RD1.parser (grammar, true, (tokenize inputString))
+// CSCI374.RD1.parseVerbose grammar inputString;;
 printfn "Done!!!\n";;
+
 
 ///
 /// Top-down parsing: LL(1)

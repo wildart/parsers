@@ -1,21 +1,117 @@
 namespace CSCI374
 
-// #load "lexer.fsx"
+module Reflection =
+
+    open Microsoft.FSharp.Reflection
+
+    let toString (x:'a) =
+        match FSharpValue.GetUnionFields(x, typeof<'a>) with
+        | case, _ -> case.Name
+
+    let fromString<'a> (s:string) =
+        match FSharpType.GetUnionCases typeof<'a> |> Array.filter (fun case -> case.Name = s) with
+        |[|case|] -> Some(FSharpValue.MakeUnion(case,[||]) :?> 'a)
+        |_ -> None
+
+    let getUnionTypes<'T> () =
+        let cases = FSharpType.GetUnionCases(typeof<'T>)
+        Array.map (fun (uc:UnionCaseInfo) -> uc.Name) cases
+
+    let getTypeByName<'T> tname =
+        let cases = FSharpType.GetUnionCases(typeof<'T>)
+        let typ = Array.find (fun (uc:UnionCaseInfo) -> uc.Name = tname) cases
+        FSharpValue.MakeUnion(typ, [| |]) :?> 'T
+
+module ParserTypes =
+
+    let (|IntLit|_|) (str:string) =
+       match System.Int32.TryParse str with
+       | (true,i) -> Some(i)
+       | _ -> None
+
+    type TOKEN = LPAR | RPAR | PLUS | MINUS | MULT | DIV | A | B | C | D | E | F | INVALID | END | EPS | INT of int with
+        override this.ToString() =
+            match this with
+            | LPAR -> "("
+            | RPAR -> ")"
+            | PLUS -> "+"
+            | MINUS -> "-"
+            | MULT -> "*"
+            | DIV -> "/"
+            | END -> "$"
+            | EPS -> "ε"
+            | INT n -> string n
+            | _ -> (Reflection.toString this).ToLower()
+        static member FromChar (c:char) =
+            let strtkn =
+                match c with
+                | '(' -> "LPAR"
+                | ')' -> "RPAR"
+                | '+' -> "PLUS"
+                | '-' -> "MINUS"
+                | '*' -> "MULT"
+                | '/' -> "DIV"
+                | '$' -> "END"
+                | c when int c = 949 -> "EPS"
+                | _ -> string c
+            TOKEN.FromString strtkn
+        static member FromString s =
+            match s with
+            | IntLit num -> INT num
+            | _  -> match Reflection.fromString<TOKEN> (s.ToUpper()) with
+                    | Some(t) -> t
+                    | _ -> INVALID
+
+    type RULE = S | T | U | V | W | X | Y | Z with
+        override this.ToString() = Reflection.toString this
+        static member FromString s = Reflection.fromString<RULE> s
+
+    type SYMBOL = Terminal of TOKEN | NonTerminal of RULE | Error with
+        override this.ToString() =
+            match this with
+            | Terminal t -> t.ToString()
+            | NonTerminal n -> n.ToString()
+            | Error -> "ERROR"
+
+    type SYMBOLS = SYMBOL list
+    type PRODUCTION = SYMBOL * SYMBOLS
 
 module GrammarTools =
 
-    open Lexer
-    open Microsoft.FSharp.Reflection
+    open ParserTypes
+
+    type ACTION =
+        | Shift of int
+        | Reduce of int
+        | Accept
 
     let rng = System.Random()
     let (=>) s ss = (s,ss)
+
+    let charsToString (cs:char list) =
+        List.fold (fun a c -> a + string c) "" cs
+
+    let isNumber (c:char) :bool = c >= '0' && c <= '9'
+
+    let isBinOp = function
+        | '+' | '-' | '*' | '/'  -> true
+        | _ -> false
+
+    let SymbolsToStrDlm dlm (xs:'a list) :string =
+        List.fold (fun a (s:'a) -> a + (s.ToString())+dlm) "" xs
+
+    let SymbolsToStr (xs:'a list) :string =
+        SymbolsToStrDlm "" xs
+
+    let RuleToStr ((lhs,rhs):'a *'b list) :string =
+        sprintf "%s → %s" (lhs.ToString()) (SymbolsToStr rhs)
 
     let strGrammarRule verbose (grammar:PRODUCTION []) ruleIdx =
         let lhs, rhs = grammar.[ruleIdx-1]
         if verbose then
             sprintf "%d: %A → %A" ruleIdx lhs rhs
         else
-            sprintf "%d: %s → %s" ruleIdx (lhs.ToStr) (SymbolsToStr rhs)
+            sprintf "%d: %s → %s" ruleIdx (lhs.ToString()) (SymbolsToStr rhs)
 
     let printGrammarRule verbose (grammar:PRODUCTION []) ruleIdx =
         (strGrammarRule verbose grammar ruleIdx) |> printfn "%s"
@@ -34,7 +130,7 @@ module GrammarTools =
                         |> Array.map (snd >> SymbolsToStr)
                         |> Array.fold (fun a s -> a + s + " | ") ""
                         |> fun s -> s.TrimEnd([|'|'; ' '|])
-                sprintf "%s → %s" (nt.ToStr) rhs
+                sprintf "%s → %s" (nt.ToString()) rhs
         } |> Seq.fold (fun a v -> a + v + "\n") ""
 
     let printGrammar (grammar:PRODUCTION []) =
@@ -63,7 +159,7 @@ module GrammarTools =
             | h::xs ->
                 let cstf =
                     match h with
-                    | Terminal s -> (s.ToStr, depth)
+                    | Terminal s -> (s.ToString(), depth)
                     | NonTerminal s -> expand h depth
                     | _ -> failwith "ERROR"
                 let estf = processRHS xs depth
@@ -90,15 +186,6 @@ module GrammarTools =
                 else ()
                 if c = 1000 then failwith "Cannot generate sentences with specified parameters"
         }
-
-    let getUnionTypes<'T> () =
-        let cases = FSharpType.GetUnionCases(typeof<'T>)
-        Array.map (fun (uc:UnionCaseInfo) -> uc.Name) cases
-
-    let getTypeByName<'T> tname =
-        let cases = FSharpType.GetUnionCases(typeof<'T>)
-        let typ = Array.find (fun (uc:UnionCaseInfo) -> uc.Name = tname) cases
-        FSharpValue.MakeUnion(typ, [| |]) :?> 'T
 
     let swap (a: _[]) x y =
         let tmp = a.[x]
@@ -145,18 +232,18 @@ module GrammarTools =
                             for (ntc, tc) in rhs ->
                                 let ntsym =
                                     (Array.filter (fun s -> s <> nt) nterms |> sample ntc)
-                                    |> Array.map (getTypeByName<RULE> >>  NonTerminal)
+                                    |> Array.map (Reflection.getTypeByName<RULE> >>  NonTerminal)
                                 let tsym =
                                     (terms |> sample tc)
-                                    |> Array.map (getTypeByName<TOKEN> >> Terminal)
+                                    |> Array.map (Reflection.getTypeByName<TOKEN> >> Terminal)
                                 Array.append ntsym tsym |> shuffle |> Array.toList
                         ]
-                        yield ((getTypeByName<RULE> >>  NonTerminal) nt, rhsSym)
+                        yield ((Reflection.getTypeByName<RULE> >>  NonTerminal) nt, rhsSym)
         }
 
     let genGrammar prodNumber termsNumber rhsRules ruleSize specialSym = [|
-        let nterms = getUnionTypes<RULE> () |> sample prodNumber
-        let tkns = getUnionTypes<TOKEN> ()
+        let nterms = Reflection.getUnionTypes<RULE> () |> sample prodNumber
+        let tkns = Reflection.getUnionTypes<TOKEN> ()
         let terms =
             if specialSym then tkns else (Array.skip 6 tkns)
             |> Array.takeWhile (fun t -> t <> "INVALID")
@@ -180,14 +267,14 @@ module GrammarTools =
         let trim (s:string) = s.Trim([|' '|])
         let split (c:char) (s:string) = s.Split(c)
         let astuple (arr:'a []) = arr.[0], arr.[1]
-        let charToRule (c:char) = (string c) |> getTypeByName<RULE> |> NonTerminal
-        let strToToken (s:string) = s.ToUpper () |>  getTypeByName<TOKEN> |> Terminal
+        let charToRule (c:char) = (string c) |> Reflection.getTypeByName<RULE> |> NonTerminal
+        let strToToken (s:string) = s.ToUpper () |>  Reflection.getTypeByName<TOKEN> |> Terminal
         let str chs = Seq.fold (fun str x -> str + x.ToString()) "" chs
         let srules = sgrammar |> split '\n' |> Array.filter (fun s -> s.Length <> 0)
         [|
             for srule in srules do
                 let slhs, srhs = srule |> split '→' |> Array.map trim |> astuple
-                let lhs = getTypeByName<RULE> slhs |> NonTerminal
+                let lhs = Reflection.getTypeByName<RULE> slhs |> NonTerminal
                 yield! [
                     for sprod in (srhs |> Seq.filter (fun c -> c <> ' ') |> str |> split '|' |> Array.map trim) -> lhs, [
                         for c in sprod ->
@@ -205,3 +292,65 @@ module GrammarTools =
                     ]
                 ]
         |]
+
+module FSMLexer =
+
+    open ParserTypes
+    open GrammarTools
+
+    let rec tokenize (input:char list) =
+        match input with
+        | c::str when isNumber c -> (number [c] str)
+        | c::str when isBinOp c -> (operation c str)
+        | [] -> [END]
+        | _  -> [INVALID]
+
+    and number (nums:char list) (input:char list) =
+        let makeIntLit cs = cs |> List.rev |> charsToString |> int |> INT
+        match input with
+        | [] -> (makeIntLit nums)::[END]
+        | ' '::str -> (makeIntLit nums)::(space str)
+        | c::str when isNumber c -> (number (c::nums) str)
+        | _  -> [INVALID]
+
+    and space (input:char list) =
+        match input with
+        | c::str when isNumber c -> (number [c] str)
+        | c::str when isBinOp c -> (operation c str)
+        | [] -> [END]
+        | _  -> [INVALID]
+
+    and operation (c:char) input =
+        match input with
+        | []  -> (TOKEN.FromChar c)::[END]
+        | ' '::str -> (TOKEN.FromChar c)::(space str)
+        | _  -> [INVALID]
+
+module Lexer =
+
+    open ParserTypes
+    open GrammarTools
+
+    let rec makeInt (cs:char list) =
+        cs |> List.rev |> charsToString |> int |> INT
+
+    // read input until number is tokenized
+    let rec parseInt (cs:char list) input =
+        match input with
+        | [] -> (makeInt cs), []
+        | c::t when isNumber c -> parseInt (c::cs) t
+        | _  -> (makeInt cs), input
+
+    // lexical analyser
+    let rec token (input:char list) =
+        match input with
+        | c::t when isNumber c -> parseInt [c] t
+        | ' '::t -> token t
+        | c::t -> TOKEN.FromChar c, t
+        | []   -> END, []
+        | _   -> INVALID, []
+
+    let rec tokenize input =
+        match token input with
+        | END, [] -> [END]
+        | t, cs -> t::(tokenize cs)

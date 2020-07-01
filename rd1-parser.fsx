@@ -1,56 +1,67 @@
 namespace CSCI374
 
-// #load "lexer.fsx"
 // #load "grammartools.fsx"
 
 module RD1 =
-    open Lexer
+    open ParserTypes
     open GrammarTools
 
-    let enterProd sym cnxt =
-        let grammar, verbose, (tkn, input) = cnxt
-        if verbose then (printfn "Enter <%A> with token `%A`" sym tkn) else ()
+    type Tokenizer(grammar: PRODUCTION [], verbose: bool) =
+        let mutable inputState = []
+        let mutable curentToken = INVALID
+        member this.InputState
+            with get() = inputState
+            and set(value) = inputState <- value
+        member this.CurrentToken = curentToken
+        member this.IsVerbose = verbose
+        member this.NextToken() =
+            let tkn, input = Lexer.token inputState
+            inputState <- input
+            curentToken <- tkn
+            this
+        member this.PrintRule ruleIdx =
+            printGrammarRule false grammar ruleIdx // print rule
+        new(grammar) = Tokenizer(grammar, false)
+
+    let (==>) (cnxt:Tokenizer) (prod:Tokenizer->Tokenizer) =
+        if cnxt.IsVerbose then
+            printfn "Enter <%A> with token `%A`" prod cnxt.CurrentToken
+        let nextcnxt = prod cnxt
+        if cnxt.IsVerbose then
+            printfn "Exit <%A> with token `%A`" prod cnxt.CurrentToken
+        nextcnxt
+
+    let (@) (cnxt:Tokenizer) ruleIdx =
+        cnxt.PrintRule ruleIdx
         cnxt
 
-    let exitProd sym cnxt =
-        let grammar, verbose, (tkn, input) = cnxt
-        if verbose then (printfn "Exit <%A> with token `%A`" sym tkn) else ()
-        cnxt
-
-     (*
-        1: S -> T
-        2: S -> ( S + T )
-        3: T -> a
-    *)
-    let rec ProdS cnxt =
-        let grammar, verbose, (tkn, input) = cnxt
-        if tkn = LPAR then
-            let newcnxt = (grammar, verbose, (tokenize input))
-            printGrammarRule false grammar 2 // print rule
-            newcnxt |> enterProd S |> ProdS |> exitProd S
-                    |> Match PLUS
-                    |> enterProd T |> ProdT |> exitProd T
-                    |> Match RPAR  // match token
+    //==========================================================================
+    // Recursive-descent parser
+    //--------------------------------------------------------------------------
+    let rec ProdS (cnxt:Tokenizer) =
+        if cnxt.CurrentToken = LPAR then
+            cnxt.NextToken() @2==> ProdS ==> Match PLUS ==> ProdT ==> Match RPAR // 2: S -> ( S + T )
         else
-            printGrammarRule false grammar 1 // print rule
-            cnxt |> enterProd T |> ProdT |> exitProd T
+            cnxt @1==> ProdT // 1: S -> T
 
-    and ProdT cnxt =
-        let grammar, verbose,  (tkn, input) = cnxt
-        printGrammarRule false grammar 3 // print rule
-        Match A cnxt // match token
+    and ProdT (cnxt:Tokenizer) =
+        cnxt @3==> Match A // 3: T -> a
 
     and Match term cnxt =
-        let (grammar, verbose, (tkn, input)) = cnxt
-        if verbose then (printfn "Match %s" term.ToStr) else ()
-        if term = tkn then
-            (grammar, verbose, (tokenize input)) // read next token
+        if cnxt.IsVerbose then printfn "Match %A with %A" term cnxt.CurrentToken
+        // if we matched the current token with a terminal symbol
+        if term = cnxt.CurrentToken then
+            cnxt.NextToken() // read next token
         else
-            failwith (sprintf "Cannot match symbol `%A` with `%A`" term tkn)
+            failwith (sprintf "Cannot match symbol `%A` with `%A`" term cnxt.CurrentToken)
+    //==========================================================================
 
-    let parser cnxt :(PRODUCTION [] * bool * (TOKEN * seq<char>)) =
-        cnxt |> enterProd S |> ProdS |> exitProd S
+    let parser (cnxt:Tokenizer) :Tokenizer =
+        // Start parsing by calling function for starting symbol
+        cnxt.NextToken() ==> ProdS
 
     let parse (grammar: PRODUCTION []) input =
-        let cnxt = (grammar, false, (tokenize input))
-        cnxt |> parser |> ignore
+        Tokenizer(grammar, InputState=(Seq.toList input)) |> parser |> ignore
+
+    let parseVerbose (grammar: PRODUCTION []) input =
+        Tokenizer(grammar, true, InputState=(Seq.toList input)) |> parser |> ignore

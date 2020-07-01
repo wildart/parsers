@@ -1,12 +1,10 @@
-// -*- coding: utf-8 -*-
 namespace CSCI374
 
-// #load "lexer.fsx"
 // #load "grammartools.fsx"
 
 module LL1 =
 
-    open Lexer
+    open ParserTypes
     open GrammarTools
 
     // syntactic analyser
@@ -36,7 +34,7 @@ module LL1 =
                         // pop stack
                         if verbose then (printfn "pop %A" (List.head stack)) else ()
                          // advance input, read new token
-                        analyse (List.tail stack) (tokenize input)
+                        analyse (List.tail stack) (Lexer.token input)
                     | _ ->
                         failwithf "bad term on input: %A" token
                 | NonTerminal nterm ->
@@ -57,6 +55,7 @@ module LL1 =
                     end
                 | _ -> failwith "error"
 
-        analyse stack (tokenize input)
+        analyse stack (Lexer.token input)
 
-    let parse grammar table input = parser grammar (Map.ofList table) input false
+    let parse grammar table input =
+        parser grammar (Map.ofList table) (Seq.toList input) false
