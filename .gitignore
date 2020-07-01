@@ -1,1 +1,4 @@
 misc
+.fake
+.ionide
+.ipynb_checkpoints
