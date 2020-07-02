@@ -27,18 +27,16 @@ module LR0 =
                 | Shift state -> analyse (state::stack) (Lexer.token input) // advance input
                 // reduce by rule: X ::= A1...An
                 | Reduce ruleIdx ->
-                    match grammar.[ruleIdx-1] with
-                    | (NonTerminal lhs, rhs) ->
-                        // print current gramma rule
-                        if verbose then printf "Reduce Rule "; else ()
-                        printGrammarRule verbose grammar ruleIdx
-                        // restore state before reduction from top of stack
-                        let newstack = List.skip (List.length rhs) stack
-                        let tops = List.head newstack
-                        if verbose then (printfn "Stack top: %A" tops)
-                        let state = goto.[(tops)].[lhs] // state after reduction
-                        analyse (state::newstack) (token, input)
-                    | _ -> failwith "Incorrect production"
+                    let (lhs, rhs) = grammar.[ruleIdx-1]
+                    // print current gramma rule
+                    if verbose then printf "Reduce Rule "; else ()
+                    printGrammarRule verbose grammar ruleIdx
+                    // restore state before reduction from top of stack
+                    let newstack = List.skip (List.length rhs) stack
+                    let tops = List.head newstack
+                    if verbose then (printfn "Stack top: %A" tops)
+                    let state = goto.[(tops)].[lhs] // state after reduction
+                    analyse (state::newstack) (token, input)
                 | Accept -> printfn "Accepted!!!"
             else ()
 

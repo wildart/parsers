@@ -13,7 +13,7 @@ module LL1 =
             failwith "Grammmar is empty!"
         // Push a $ on the stack
         // Initialize the stack to the start symbol.
-        let stack = [(fst grammar.[0]); Terminal END]
+        let stack = [NonTerminal (fst grammar.[0]); Terminal END]
 
         let rec analyse stack (token, input) =
             if verbose then (printfn "Token: %A, Stack: %A" token stack) else ()

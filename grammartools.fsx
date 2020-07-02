@@ -82,7 +82,7 @@ module ParserTypes =
             | t -> Terminal t
 
     type SYMBOLS = SYMBOL list
-    type PRODUCTION = SYMBOL * SYMBOLS
+    type PRODUCTION = RULE * SYMBOLS
 
 module GrammarTools =
 
@@ -173,7 +173,7 @@ module GrammarTools =
                 let cstf =
                     match h with
                     | Terminal s -> (s.ToString(), depth)
-                    | NonTerminal s -> expand h depth
+                    | NonTerminal s -> expand s depth
                     | _ -> failwith "ERROR"
                 let estf = processRHS xs depth
                 let reached = max (snd cstf) (snd estf)
@@ -267,7 +267,7 @@ module GrammarTools =
         |]
 
     let isLeftRecursive (g:PRODUCTION []) =
-        List.fold ( || ) false [for (lhs,rhs) in g -> lhs = (List.head rhs)]
+        List.fold ( || ) false [for (lhs,rhs) in g -> (NonTerminal lhs) = (List.head rhs)]
 
     let makeLeftRecursive grammar =
         let i = rng.Next(0, Array.length grammar)
@@ -288,7 +288,7 @@ module GrammarTools =
         [|
             for srule in srules do
                 let slhs, srhs = srule |> split '→' |> Array.map trim |> astuple
-                let lhs = Reflection.getTypeByName<RULE> slhs |> NonTerminal
+                let lhs = Reflection.getTypeByName<RULE> slhs
                 yield! [
                     for sprod in (srhs |> Seq.filter (fun c -> c <> ' ') |> str |> split '|' |> Array.map trim) -> lhs, [
                         for c in sprod -> SYMBOL.FromChar c
@@ -311,7 +311,7 @@ module GrammarTools =
         match syms with
         | (Terminal t)::xs -> [Terminal t]
         | (NonTerminal s)::xs ->
-            let prods = (Array.filter (fun e -> (fst e) = (NonTerminal s)) g) |> Array.map snd |>Array.toList
+            let prods = (Array.filter (fun e -> (fst e) =  s) g) |> Array.map snd |>Array.toList
             [for rhs in prods do yield! looprhs rhs] |> List.distinct
         | _ -> []
 
@@ -319,7 +319,7 @@ module GrammarTools =
         Array.map fst grammar
         |> Array.distinct
         |> Array.sort
-        |> Array.map (fun nt -> (nt, firstterm grammar [nt]))
+        |> Array.map (fun nt -> (nt, firstterm grammar [NonTerminal nt]))
 
     let printFirst (grammar:PRODUCTION []) =
         printfn "FIRST:"
