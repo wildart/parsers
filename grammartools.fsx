@@ -99,6 +99,30 @@ module GrammarTools =
     let charsToString (cs:char list) =
         List.fold (fun a c -> a + string c) "" cs
 
+    let enumerate xs =
+        let rec enumloop n xs =
+            match (n, xs) with
+            | n, [x] -> [(n, x)]
+            | n, x::xs -> (n, x)::(enumloop (n+1) xs)
+            | _, _ -> []
+        enumloop 0 xs
+
+    let swap (a: _[]) x y =
+        let tmp = a.[x]
+        a.[x] <- a.[y]
+        a.[y] <- tmp
+
+    // shuffle an array (in-place)
+    let shuffle a =
+        Array.iteri (fun i _ -> swap a i (rng.Next(i, Array.length a))) a
+        a
+
+    let sample n xs =
+        xs
+        |> Array.map (fun x -> rng.Next(),x)
+        |> Array.sortBy fst
+        |> Array.map snd
+        |> Array.take n
     let isNumber (c:char) :bool = c >= '0' && c <= '9'
 
     let isBinOp = function
@@ -200,23 +224,6 @@ module GrammarTools =
                 if c = 1000 then failwith "Cannot generate sentences with specified parameters"
         }
 
-    let swap (a: _[]) x y =
-        let tmp = a.[x]
-        a.[x] <- a.[y]
-        a.[y] <- tmp
-
-    // shuffle an array (in-place)
-    let shuffle a =
-        Array.iteri (fun i _ -> swap a i (rng.Next(i, Array.length a))) a
-        a
-
-    let sample n xs =
-        xs
-        |> Array.map (fun x -> rng.Next(),x)
-        |> Array.sortBy fst
-        |> Array.map snd
-        |> Array.take n
-
     // Returns number of nonterminals and terminals in the rule
     let getRuleSize rsize =
         let curRuleSize = rng.Next(1,rsize+1)
@@ -266,6 +273,9 @@ module GrammarTools =
             for p in prods -> (nt,p)
         |]
 
+    let leftRecursiveRules (g:PRODUCTION []) =
+        [for (i,(lhs,rhs)) in (g |> Array.toList |> enumerate) -> (i,(NonTerminal lhs) = (List.head rhs))]
+
     let isLeftRecursive (g:PRODUCTION []) =
         List.fold ( || ) false [for (lhs,rhs) in g -> (NonTerminal lhs) = (List.head rhs)]
 
@@ -312,7 +322,7 @@ module GrammarTools =
         | (Terminal t)::xs -> [Terminal t]
         | (NonTerminal s)::xs ->
             let prods = (Array.filter (fun e -> (fst e) =  s) g) |> Array.map snd |>Array.toList
-            [for rhs in prods do yield! looprhs rhs] |> List.distinct
+            [for rhs in prods do if (List.head rhs) <> (NonTerminal s) then yield! looprhs rhs] |> List.distinct
         | _ -> []
 
     let first (grammar:PRODUCTION []) =
@@ -325,6 +335,24 @@ module GrammarTools =
         printfn "FIRST:"
         for (nt, first) in (first grammar) do
             first |>  SymbolsToStrDlm ", " |> printfn "%s -> {%s}" (string nt)
+
+    let pairwiseDisjointRule (g:PRODUCTION []) (nt:RULE) =
+        let prods = Array.filter (fun e -> (fst e) = nt) g |> Array.map snd |> Array.toList
+        let fsets = prods |> List.map (firstterm g >> (List.filter (fun xs -> xs <> (Terminal EPS))) >> Set.ofList) |> enumerate
+        seq {for (i,s1) in fsets do yield! [for (j,s2) in fsets do if i <> j && i < j then yield (Set.intersect s1 s2)]}
+        |> Set.unionMany |> Set.toList
+
+    let isPairwiseDisjointRule (g:PRODUCTION []) (nt:RULE) =
+        pairwiseDisjointRule g nt |> List.isEmpty
+
+    let pairwiseDisjoint (grammar:PRODUCTION []) =
+        Array.map fst grammar
+        |> Array.distinct
+        |> Array.sort
+        |> Array.map (fun nt -> (nt, isPairwiseDisjointRule grammar nt))
+
+    let isPairwiseDisjoint (grammar:PRODUCTION []) =
+        grammar |> pairwiseDisjoint |> Array.map (snd) |> Array.fold (&&) true
 
 module FSMLexer =
 
