@@ -65,6 +65,7 @@ module ParserTypes =
     type RULE = S | T | U | V | W | X | Y | Z with
         override this.ToString() = Reflection.toString this
         static member FromString s = Reflection.fromString<RULE> s
+        static member FromChar (c:char) = Reflection.fromString<RULE> (string c)
 
     type SYMBOL = Terminal of TOKEN | NonTerminal of RULE | Error with
         override this.ToString() =
@@ -72,6 +73,13 @@ module ParserTypes =
             | Terminal t -> t.ToString()
             | NonTerminal n -> n.ToString()
             | Error -> "ERROR"
+        static member FromChar c =
+            match TOKEN.FromChar c with
+            | INVALID ->
+                match RULE.FromChar c with
+                | Some(t) -> NonTerminal t
+                | _ -> Terminal INVALID
+            | t -> Terminal t
 
     type SYMBOLS = SYMBOL list
     type PRODUCTION = SYMBOL * SYMBOLS
@@ -97,13 +105,18 @@ module GrammarTools =
         | '+' | '-' | '*' | '/'  -> true
         | _ -> false
 
-    let SymbolsToStrDlm dlm (xs:'a list) :string =
-        List.fold (fun a (s:'a) -> a + (s.ToString())+dlm) "" xs
+    let SymbolsToStrDlm dlm (xs:SYMBOLS) :string =
+        xs
+        |> List.fold (fun a (s:SYMBOL) ->
+                        let i = (fst a)+1
+                        let acc = (snd a) + s.ToString()
+                        (i, acc + if i < List.length xs then dlm else "")) (0, "")
+        |> snd
 
-    let SymbolsToStr (xs:'a list) :string =
+    let SymbolsToStr (xs:SYMBOLS) :string =
         SymbolsToStrDlm "" xs
 
-    let RuleToStr ((lhs,rhs):'a *'b list) :string =
+    let RuleToStr ((lhs,rhs):SYMBOL * SYMBOLS) :string =
         sprintf "%s → %s" (lhs.ToString()) (SymbolsToStr rhs)
 
     let strGrammarRule verbose (grammar:PRODUCTION []) ruleIdx =
@@ -253,6 +266,9 @@ module GrammarTools =
             for p in prods -> (nt,p)
         |]
 
+    let isLeftRecursive (g:PRODUCTION []) =
+        List.fold ( || ) false [for (lhs,rhs) in g -> lhs = (List.head rhs)]
+
     let makeLeftRecursive grammar =
         let i = rng.Next(0, Array.length grammar)
         let lhs, rhs = grammar.[i]
@@ -267,8 +283,6 @@ module GrammarTools =
         let trim (s:string) = s.Trim([|' '|])
         let split (c:char) (s:string) = s.Split(c)
         let astuple (arr:'a []) = arr.[0], arr.[1]
-        let charToRule (c:char) = (string c) |> Reflection.getTypeByName<RULE> |> NonTerminal
-        let strToToken (s:string) = s.ToUpper () |>  Reflection.getTypeByName<TOKEN> |> Terminal
         let str chs = Seq.fold (fun str x -> str + x.ToString()) "" chs
         let srules = sgrammar |> split '\n' |> Array.filter (fun s -> s.Length <> 0)
         [|
@@ -277,21 +291,40 @@ module GrammarTools =
                 let lhs = Reflection.getTypeByName<RULE> slhs |> NonTerminal
                 yield! [
                     for sprod in (srhs |> Seq.filter (fun c -> c <> ' ') |> str |> split '|' |> Array.map trim) -> lhs, [
-                        for c in sprod ->
-                            match c with
-                            | '(' -> strToToken "LPAR"
-                            | ')' -> strToToken "RPAR"
-                            | '+' -> strToToken "PLUS"
-                            | '-' -> strToToken "MINUS"
-                            | '*' -> strToToken "MULT"
-                            | '/' -> strToToken "DIV"
-                            | '$' -> strToToken "END"
-                            | c when int c = 949 -> strToToken "EPS"
-                            | c when (System.Char.IsUpper c) -> charToRule c
-                            | _ -> strToToken (string c)
+                        for c in sprod -> SYMBOL.FromChar c
                     ]
                 ]
         |]
+
+    let rec firstterm (g:PRODUCTION []) (syms:SYMBOLS) =
+        let isEps e =  e = (Terminal EPS)
+        let hasEps xs = List.exists isEps xs
+        let rec looprhs (rhs:SYMBOLS) =
+            match rhs with
+            | (Terminal t)::xs -> [Terminal t]
+            | p::ps ->
+                let res = firstterm g [p]
+                if not (List.isEmpty ps) && (hasEps res) then
+                    (List.filter (isEps>>not) res)@(looprhs ps)
+                else res
+            | _ -> []
+        match syms with
+        | (Terminal t)::xs -> [Terminal t]
+        | (NonTerminal s)::xs ->
+            let prods = (Array.filter (fun e -> (fst e) = (NonTerminal s)) g) |> Array.map snd |>Array.toList
+            [for rhs in prods do yield! looprhs rhs] |> List.distinct
+        | _ -> []
+
+    let first (grammar:PRODUCTION []) =
+        Array.map fst grammar
+        |> Array.distinct
+        |> Array.sort
+        |> Array.map (fun nt -> (nt, firstterm grammar [nt]))
+
+    let printFirst (grammar:PRODUCTION []) =
+        printfn "FIRST:"
+        for (nt, first) in (first grammar) do
+            first |>  SymbolsToStrDlm ", " |> printfn "%s -> {%s}" (string nt)
 
 module FSMLexer =
 
