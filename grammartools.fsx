@@ -251,43 +251,102 @@ module GrammarTools =
                         let rhsSym = [
                             for (ntc, tc) in rhs ->
                                 let ntsym =
-                                    (Array.filter (fun s -> s <> nt) nterms |> sample ntc)
-                                    |> Array.map (Reflection.getTypeByName<RULE> >>  NonTerminal)
+                                    let nts = (Array.filter (fun s -> s <> nt) nterms |> sample ntc)
+                                    Array.map (Reflection.getTypeByName<RULE> >>  NonTerminal) nts
                                 let tsym =
-                                    (terms |> sample tc)
-                                    |> Array.map (Reflection.getTypeByName<TOKEN> >> Terminal)
+                                    let ts = sample tc terms
+                                    Array.map (Reflection.getTypeByName<TOKEN> >> Terminal) ts
                                 Array.append ntsym tsym |> shuffle |> Array.toList
                         ]
-                        yield ((Reflection.getTypeByName<RULE> >>  NonTerminal) nt, rhsSym)
+                        let lhs = Reflection.getTypeByName<RULE> nt
+                        yield (lhs, rhsSym)
         }
 
-    let genGrammar prodNumber termsNumber rhsRules ruleSize specialSym = [|
-        let nterms = Reflection.getUnionTypes<RULE> () |> sample prodNumber
+    let genGrammar prodNumber termsNumber rhsRules ruleSize specialSym =  [|
+        // generate nonterminals
+        let rterms = Reflection.getUnionTypes<RULE> () |> sample prodNumber
+        // add S symbol if doesnt exist
+        let nterms =
+            if Array.exists ((<>)"S") rterms
+            then Array.append [|"S"|] rterms.[1..]
+            else rterms
+        // generate terminals
         let tkns = Reflection.getUnionTypes<TOKEN> ()
         let terms =
             if specialSym then tkns else (Array.skip 6 tkns)
             |> Array.takeWhile (fun t -> t <> "INVALID")
             |> sample termsNumber
-        let rules = genProdParams nterms terms rhsRules ruleSize
+        let rules = genProdParams (Array.sort nterms) terms rhsRules ruleSize
         for (nt,prods) in rules do
-            for p in prods -> (nt,p)
+            for p in prods -> PRODUCTION (nt, p)
         |]
 
+    let isLeftRecursiveRule (g:PRODUCTION []) (p:PRODUCTION) =
+        let rec isLRR (p:PRODUCTION) (nt:RULE list) =
+            match p with
+            | _, (Terminal f)::rhs -> false
+            | lhs, (NonTerminal f)::rhs ->
+                if (List.exists ((=)f) nt) then true
+                else
+                    let derived = Array.filter (fun pr -> (fst pr) = f) g
+                    Array.fold ( || ) false (Array.map (fun p-> isLRR p (lhs::nt)) derived)
+            | _ -> false
+        isLRR p [(fst p)]
+
     let leftRecursiveRules (g:PRODUCTION []) =
-        [for (i,(lhs,rhs)) in (g |> Array.toList |> enumerate) -> (i,(NonTerminal lhs) = (List.head rhs))]
+        let ig = g |> Array.toList |> enumerate
+        List.map (fun (i,r) -> (i, (isLeftRecursiveRule g r)))  ig
 
     let isLeftRecursive (g:PRODUCTION []) =
-        List.fold ( || ) false [for (lhs,rhs) in g -> (NonTerminal lhs) = (List.head rhs)]
+        List.fold ( || ) false (List.map snd (leftRecursiveRules g))
 
-    let makeLeftRecursive grammar =
-        let i = rng.Next(0, Array.length grammar)
-        let lhs, rhs = grammar.[i]
+    let makeLeftRecursive (g:PRODUCTION []) =
+        let i = rng.Next(0, Array.length g)
+        let lhs, rhs = g.[i]
         let newrhs =
             match rhs with
-            | (NonTerminal s)::xs -> lhs::xs
-            | xs -> lhs::xs
-        grammar.[i] <- lhs, newrhs
-        grammar
+            | (NonTerminal s)::xs -> (NonTerminal lhs)::xs
+            | xs -> (NonTerminal lhs)::xs
+        g.[i] <- lhs, newrhs
+        g
+
+    let leftmost g (p:PRODUCTION) =
+        match p with
+        | lhs, (NonTerminal s)::rhs ->
+            let prepl = Array.filter (fun pr -> (fst pr) = s) g
+            [| for (_,r) in prepl -> (lhs, r @ rhs) |]
+        | _ -> [|p|]
+
+    let replaceProduction (g:PRODUCTION []) p =
+        match p with
+        | lhs, (NonTerminal r)::rhs when lhs = r -> g
+        | _ -> Array.filter ((<>)p) g |> Array.append (leftmost g p)
+
+    let leftRecursiveSimple (g:PRODUCTION []) =
+        [for (i,(lhs,rhs)) in (g |> Array.toList |> enumerate) -> (i,(NonTerminal lhs) = (List.head rhs))]
+        |> List.filter snd |> List.map fst
+
+    let rec removeLR (g:PRODUCTION []) =
+        let rsimple = leftRecursiveSimple g
+        match rsimple with
+        | i::xs ->
+            let lhs,rhs = g.[i]
+            let currnt = g |> Array.map fst |> Array.map (fun e -> e.ToString()) |> Set.ofArray
+            let freent = Set.difference (Reflection.getUnionTypes<RULE> () |> Set.ofArray) currnt |> Set.toList |> List.head |> RULE.FromString
+            match freent with
+            | None -> g
+            | Some fr ->
+                let sym = NonTerminal fr
+                Array.filter (fun (l,r) -> l=lhs && r<>rhs) g
+                |> ( Array.map ( fun (l,r) -> (l,r@[sym]) ) )
+                |> Array.append ( Array.filter (fst>>(<>)lhs) g )
+                |> Array.append [|(fr, (List.tail rhs)@[sym])|]
+                |> Array.append [|(fr, [Terminal EPS])|]
+        | _ ->
+            let rindirect = leftRecursiveRules g |> List.filter snd |> List.map fst |> Set.ofList
+            let rreplace = Set.difference rindirect (Set.ofList rsimple) |> Set.toList
+            replaceProduction g g.[(List.head rreplace)] |> removeLR
+
 
     let parseGrammarString (sgrammar:string) =
         let trim (s:string) = s.Trim([|' '|])
@@ -297,7 +356,9 @@ module GrammarTools =
         let srules = sgrammar |> split '\n' |> Array.filter (fun s -> s.Length <> 0)
         [|
             for srule in srules do
-                let slhs, srhs = srule |> split '→' |> Array.map trim |> astuple
+                let srule2 = srule.Replace("->", "→") // replace ASCII arrows with Unicode
+                printfn "%s "srule2
+                let slhs, srhs = srule2 |> split '→' |> Array.map trim |> astuple
                 let lhs = Reflection.getTypeByName<RULE> slhs
                 yield! [
                     for sprod in (srhs |> Seq.filter (fun c -> c <> ' ') |> str |> split '|' |> Array.map trim) -> lhs, [
